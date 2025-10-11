@@ -147,6 +147,7 @@ export default function ProductsList() {
               width={600}
               rowCount={filteredProducts.length}
               rowHeight={cache.rowHeight}
+              deferredMeasurementCache={cache}
               overscanRowCount={3}
               isScrolling={isScrolling}
               onScroll={onChildScroll}
