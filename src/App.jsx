@@ -24,8 +24,7 @@ const cache = new CellMeasurerCache({
   minHeight: 120,
 });
 
-const ProductCard = memo(({ product, onImageLoad }) => {
-  const [liked, setLiked] = useState(false);
+const ProductCard = memo(({ product, liked, onToggleLike, onImageLoad }) => {
   return (
     <li className="card">
       <LazyImage src={product.image} alt={product.title} onLoad={onImageLoad} />
@@ -37,7 +36,7 @@ const ProductCard = memo(({ product, onImageLoad }) => {
         <div className="card-footer">
           <span className="user-badge">{product.userName}</span>
           <button
-            onClick={() => setLiked((v) => !v)}
+            onClick={() => onToggleLike(product.id)}
             className={liked ? "liked" : ""}
           >
             {liked ? "❤️ Liked" : "🤍 Like"}
@@ -52,6 +51,7 @@ export default function ProductsList() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [likedProducts, setLikedProducts] = useState(new Set());
 
   const deferredSearch = useDeferredValue(search);
 
@@ -69,10 +69,13 @@ export default function ProductsList() {
         const productsData = await productsRes.json();
         const usersData = await usersRes.json();
 
+        const usersMap = usersData?.users?.reduce((acc, user) => {
+          acc[user.id] = user;
+          return acc;
+        }, {});
+
         const combined = productsData?.products?.map((product) => {
-          const matchedUser = usersData?.users?.find(
-            (user) => user.id === product.id
-          );
+          const matchedUser = usersMap[product.id];
 
           return {
             id: product.id,
@@ -83,7 +86,6 @@ export default function ProductsList() {
             brand: product.brand,
             category: product.category,
             image: product.images?.[0],
-
             userName: matchedUser
               ? `${matchedUser.firstName} ${matchedUser.lastName}`
               : "Unknown User",
@@ -116,6 +118,18 @@ export default function ProductsList() {
 
   const handleSearch = (e) => {
     setSearch(e.target.value);
+  };
+
+  const toggleLike = (productId) => {
+    setLikedProducts((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(productId)) {
+        newSet.delete(productId);
+      } else {
+        newSet.add(productId);
+      }
+      return newSet;
+    });
   };
 
   if (loading) return <div className="loading">Loading...</div>;
@@ -152,25 +166,29 @@ export default function ProductsList() {
               isScrolling={isScrolling}
               onScroll={onChildScroll}
               scrollTop={scrollTop}
-              useDeferredValue={cache}
-              rowRenderer={({ index, key, style }) => (
-                <CellMeasurer
-                  key={key}
-                  cache={cache}
-                  parent={parent}
-                  columnIndex={0}
-                  rowIndex={index}
-                >
-                  {({ measure, registerChild }) => (
-                    <div ref={registerChild} style={style}>
-                      <ProductCard
-                        product={filteredProducts[index]}
-                        onImageLoad={measure}
-                      />
-                    </div>
-                  )}
-                </CellMeasurer>
-              )}
+              rowRenderer={({ index, key, style, parent }) => {
+                const product = filteredProducts[index];
+                return (
+                  <CellMeasurer
+                    key={key}
+                    cache={cache}
+                    parent={parent}
+                    columnIndex={0}
+                    rowIndex={index}
+                  >
+                    {({ measure, registerChild }) => (
+                      <div ref={registerChild} style={style}>
+                        <ProductCard
+                          product={product}
+                          liked={likedProducts.has(product.id)}
+                          onToggleLike={toggleLike}
+                          onImageLoad={measure}
+                        />
+                      </div>
+                    )}
+                  </CellMeasurer>
+                );
+              }}
             />
           )}
         </WindowScroller>
