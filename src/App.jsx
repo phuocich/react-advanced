@@ -5,13 +5,22 @@ import {
   useState,
   useDeferredValue,
   useRef,
+  Suspense,
 } from "react";
+import axios from "axios";
 import {
   List as VirtualList,
   WindowScroller,
   CellMeasurerCache,
   CellMeasurer,
 } from "react-virtualized";
+import {
+  useQuery,
+  QueryClient,
+  QueryClientProvider,
+  useQueryErrorResetBoundary,
+} from "@tanstack/react-query";
+import { ErrorBoundary } from "react-error-boundary";
 
 const API_CONFIG = {
   USERS: "https://dummyjson.com/users?limit=200",
@@ -23,6 +32,26 @@ const cache = new CellMeasurerCache({
   defaultHeight: 180,
   minHeight: 120,
 });
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      suspense: true,
+      staleTime: 5 * 60 * 1000, // 5 minutes
+      cacheTime: 10 * 60 * 1000, // 10 minutes
+    },
+  },
+});
+
+const fetchProducts = async () => {
+  const { data } = await axios.get(API_CONFIG.PRODUCTS);
+  return data.products;
+};
+
+const fetchUsers = async () => {
+  const { data } = await axios.get(API_CONFIG.USERS);
+  return data.users;
+};
 
 const ProductCard = memo(({ product, liked, onToggleLike, onImageLoad }) => {
   return (
@@ -47,74 +76,60 @@ const ProductCard = memo(({ product, liked, onToggleLike, onImageLoad }) => {
   );
 });
 
-export default function ProductsList() {
-  const [products, setProducts] = useState([]);
-  const [loading, setLoading] = useState(true);
+function ProductsList() {
   const [search, setSearch] = useState("");
   const [likedProducts, setLikedProducts] = useState(new Set());
 
   const deferredSearch = useDeferredValue(search);
 
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        const [productsRes, usersRes] = await Promise.all([
-          fetch(API_CONFIG.PRODUCTS),
-          fetch(API_CONFIG.USERS),
-        ]);
+  const { data: products } = useQuery({
+    queryKey: ["products"],
+    queryFn: fetchProducts,
+  });
 
-        if (!usersRes.ok || !productsRes.ok)
-          throw new Error("HTTP error while fetching data");
+  const { data: users } = useQuery({
+    queryKey: ["users"],
+    queryFn: fetchUsers,
+  });
 
-        const productsData = await productsRes.json();
-        const usersData = await usersRes.json();
+  const combinedProducts = useMemo(() => {
+    if (!products || !users) return [];
 
-        const usersMap = usersData?.users?.reduce((acc, user) => {
-          acc[user.id] = user;
-          return acc;
-        }, {});
+    const usersMap = users.reduce((acc, user) => {
+      acc[user.id] = user;
+      return acc;
+    }, {});
 
-        const combined = productsData?.products?.map((product) => {
-          const matchedUser = usersMap[product.id];
-
-          return {
-            id: product.id,
-            title: product.title,
-            description: product.description,
-            price: product.price,
-            rating: product.rating,
-            brand: product.brand,
-            category: product.category,
-            image: product.images?.[0],
-            userName: matchedUser
-              ? `${matchedUser.firstName} ${matchedUser.lastName}`
-              : "Unknown User",
-          };
-        });
-
-        setProducts(combined);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    fetchData();
-  }, []);
+    return products.map((product) => {
+      const matchedUser = usersMap[product.id];
+      return {
+        id: product.id,
+        title: product.title,
+        description: product.description,
+        price: product.price,
+        rating: product.rating,
+        brand: product.brand,
+        category: product.category,
+        image: product.images?.[0],
+        userName: matchedUser
+          ? `${matchedUser.firstName} ${matchedUser.lastName}`
+          : "Unknown User",
+      };
+    });
+  }, [products, users]);
 
   const filteredProducts = useMemo(() => {
-    if (!deferredSearch.trim()) return products;
+    if (!deferredSearch.trim()) return combinedProducts;
 
     const term = deferredSearch.toLowerCase();
-    return products.filter((product) => {
+    return combinedProducts.filter((product) => {
       return (
         product.title?.toLowerCase().includes(term) ||
         product.description?.toLowerCase().includes(term) ||
         product.userName?.toLowerCase().includes(term)
       );
     });
-  }, [deferredSearch, products]);
+  }, [deferredSearch, combinedProducts]);
 
   const handleSearch = (e) => {
     setSearch(e.target.value);
@@ -131,8 +146,6 @@ export default function ProductsList() {
       return newSet;
     });
   };
-
-  if (loading) return <div className="loading">Loading...</div>;
 
   return (
     <div className="container">
@@ -235,3 +248,37 @@ const LazyImage = ({ src, alt, onLoad }) => {
     </div>
   );
 };
+
+function ErrorFallback({ error, resetErrorBoundary }) {
+  return (
+    <div className="error-container">
+      <h2 className="error-title">Something went wrong</h2>
+      <p className="error-message">{error.message}</p>
+      <button onClick={resetErrorBoundary} className="error-button">
+        Try again
+      </button>
+    </div>
+  );
+}
+
+function LoadingFallback() {
+  return (
+    <div className="loading-container">
+      <div className="loading">Loading products...</div>
+    </div>
+  );
+}
+
+export default function App() {
+  const { reset } = useQueryErrorResetBoundary();
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ErrorBoundary onReset={reset} FallbackComponent={ErrorFallback}>
+        <Suspense fallback={<LoadingFallback />}>
+          <ProductsList />
+        </Suspense>
+      </ErrorBoundary>
+    </QueryClientProvider>
+  );
+}
